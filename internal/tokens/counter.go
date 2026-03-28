@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mathias/claude-sidebar/internal/claude"
+	"github.com/mathiasfn/claude-sidebar/internal/claude"
 )
 
 // Pricing per 1M tokens (USD)

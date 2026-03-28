@@ -8,10 +8,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/mathias/claude-sidebar/internal/claude"
-	gitpkg "github.com/mathias/claude-sidebar/internal/git"
-	"github.com/mathias/claude-sidebar/internal/tokens"
-	"github.com/mathias/claude-sidebar/internal/tui"
+	"github.com/mathiasfn/claude-sidebar/internal/claude"
+	gitpkg "github.com/mathiasfn/claude-sidebar/internal/git"
+	"github.com/mathiasfn/claude-sidebar/internal/tokens"
+	"github.com/mathiasfn/claude-sidebar/internal/tui"
 )
 
 func main() {

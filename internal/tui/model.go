@@ -11,8 +11,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/mathias/claude-sidebar/internal/claude"
-	gitpkg "github.com/mathias/claude-sidebar/internal/git"
+	"github.com/mathiasfn/claude-sidebar/internal/claude"
+	gitpkg "github.com/mathiasfn/claude-sidebar/internal/git"
 )
 
 // Messages

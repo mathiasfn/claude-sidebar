@@ -1,4 +1,4 @@
-module github.com/mathias/claude-sidebar
+module github.com/mathiasfn/claude-sidebar
 
 go 1.26.1
 
