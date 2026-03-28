@@ -21,6 +21,7 @@ type SessionState struct {
 type Watcher struct {
 	cwd          string
 	sessions     map[string]*SessionState // sessionID -> state
+	recentDead   []*SessionState          // most recent dead sessions
 	mu           sync.RWMutex
 	fsWatcher    *fsnotify.Watcher
 	onChange     func() // callback when data changes
@@ -73,6 +74,12 @@ func (w *Watcher) Sessions() []*SessionState {
 	return result
 }
 
+func (w *Watcher) RecentDead() []*SessionState {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.recentDead
+}
+
 func (w *Watcher) TotalTokens() Usage {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
@@ -90,20 +97,32 @@ func (w *Watcher) TotalTokens() Usage {
 }
 
 func (w *Watcher) refreshSessions() {
-	sessions, err := DiscoverSessions(w.cwd)
+	alive, dead, err := DiscoverSessionsWithRecent(w.cwd, 2)
 	if err != nil {
 		return
 	}
 
+	// Parse dead sessions
+	var deadStates []*SessionState
+	for _, sess := range dead {
+		state := &SessionState{Session: sess, Alive: false}
+		if data, err := ParseJSONL(sess.JSONLPath()); err == nil {
+			state.Data = data
+		}
+		deadStates = append(deadStates, state)
+	}
+
 	w.mu.Lock()
 	defer w.mu.Unlock()
+
+	w.recentDead = deadStates
 
 	// Mark all existing as potentially dead
 	for _, s := range w.sessions {
 		s.Alive = false
 	}
 
-	for _, sess := range sessions {
+	for _, sess := range alive {
 		existing, ok := w.sessions[sess.SessionID]
 		if ok {
 			existing.Session = sess
@@ -167,6 +186,13 @@ func (w *Watcher) updateSessionData(state *SessionState) {
 		}
 		if newData.LastUpdate.After(state.Data.LastUpdate) {
 			state.Data.LastUpdate = newData.LastUpdate
+		}
+		// Always update LastUsage and Speed to latest
+		if newData.LastUsage.ContextTokens() > 0 {
+			state.Data.LastUsage = newData.LastUsage
+		}
+		if newData.Speed != "" {
+			state.Data.Speed = newData.Speed
 		}
 	}
 	state.Offset = newOffset

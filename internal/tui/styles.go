@@ -78,6 +78,24 @@ var (
 				Foreground(purple).
 				Bold(true)
 
+	// Mode tabs
+	activeTabStyle = lipgloss.NewStyle().
+			Foreground(white).
+			Background(dimPurple).
+			Bold(true)
+
+	inactiveTabStyle = lipgloss.NewStyle().
+				Foreground(dimWhite)
+
+	modeIndicatorStyle = lipgloss.NewStyle().
+				Foreground(white).
+				Background(dimPurple).
+				Bold(true)
+
+	// Commit display
+	commitStyle = lipgloss.NewStyle().
+			Foreground(blue)
+
 	// Diff view
 	diffAddedStyle = lipgloss.NewStyle().
 			Foreground(green)

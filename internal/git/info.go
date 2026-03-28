@@ -3,59 +3,133 @@ package git
 import (
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
+type GitMode int
+
+const (
+	ModeUnstaged GitMode = iota
+	ModeStaged
+	ModeBranch
+)
+
+func (m GitMode) String() string {
+	switch m {
+	case ModeUnstaged:
+		return "Unstaged"
+	case ModeStaged:
+		return "Staged"
+	case ModeBranch:
+		return "Branch"
+	}
+	return ""
+}
+
+type FileEntry struct {
+	Status    byte   // A, M, D, R, ?, etc.
+	Path      string
+	Additions int
+	Deletions int
+}
+
 type Info struct {
-	Branch     string
-	DiffStat   string
-	Status     []StatusEntry
-	RecentLogs []string
-}
+	Branch       string
+	RemoteBranch string
 
-type StatusEntry struct {
-	Staging  byte
-	Working  byte
-	Path     string
-}
+	Unstaged    []FileEntry
+	Staged      []FileEntry
+	BranchFiles []FileEntry
 
-func (e StatusEntry) Display() string {
-	return string(e.Staging) + string(e.Working) + " " + e.Path
+	UnstagedCount  int
+	StagedCount    int
+	UntrackedCount int
+
+	BranchBase    string
+	AheadCount    int
+	BehindCount   int
+	BranchCommits []string
 }
 
 func GetInfo(cwd string) *Info {
 	info := &Info{}
 
-	// Branch
 	if out, err := runGit(cwd, "branch", "--show-current"); err == nil {
 		info.Branch = strings.TrimSpace(out)
 	}
 
-	// Status
+	info.BranchBase = detectBaseBranch(cwd)
+	info.RemoteBranch = info.BranchBase
+
+	// Parse git status for staged/unstaged/untracked
 	if out, err := runGit(cwd, "status", "--porcelain"); err == nil {
 		for _, line := range strings.Split(out, "\n") {
 			if len(line) < 3 {
 				continue
 			}
-			info.Status = append(info.Status, StatusEntry{
-				Staging: line[0],
-				Working: line[1],
-				Path:    strings.TrimSpace(line[3:]),
-			})
+			staging := line[0]
+			working := line[1]
+			path := strings.TrimSpace(line[3:])
+
+			if staging != ' ' && staging != '?' {
+				info.Staged = append(info.Staged, FileEntry{Status: staging, Path: path})
+				info.StagedCount++
+			}
+			if working != ' ' && working != '?' {
+				info.Unstaged = append(info.Unstaged, FileEntry{Status: working, Path: path})
+				info.UnstagedCount++
+			}
+			if staging == '?' {
+				info.Unstaged = append(info.Unstaged, FileEntry{Status: '?', Path: path})
+				info.UntrackedCount++
+			}
 		}
 	}
 
-	// Diff stat
-	if out, err := runGit(cwd, "diff", "--stat"); err == nil {
-		info.DiffStat = strings.TrimSpace(out)
-	}
+	// Get numstat for unstaged files (additions/deletions per file)
+	fillNumstat(cwd, info.Unstaged, "diff", "--numstat")
+	// Get numstat for staged files
+	fillNumstat(cwd, info.Staged, "diff", "--cached", "--numstat")
 
-	// Recent log
-	if out, err := runGit(cwd, "log", "--oneline", "-5"); err == nil {
-		for _, line := range strings.Split(out, "\n") {
-			line = strings.TrimSpace(line)
-			if line != "" {
-				info.RecentLogs = append(info.RecentLogs, line)
+	// Branch diff
+	if info.BranchBase != "" {
+		if out, err := runGit(cwd, "diff", "--name-status", info.BranchBase+"...HEAD"); err == nil {
+			for _, line := range strings.Split(out, "\n") {
+				line = strings.TrimSpace(line)
+				if len(line) < 2 {
+					continue
+				}
+				parts := strings.Fields(line)
+				if len(parts) < 2 {
+					continue
+				}
+				info.BranchFiles = append(info.BranchFiles, FileEntry{
+					Status: parts[0][0],
+					Path:   parts[len(parts)-1],
+				})
+			}
+		}
+
+		// Numstat for branch files
+		fillNumstat(cwd, info.BranchFiles, "diff", "--numstat", info.BranchBase+"...HEAD")
+
+		// Ahead/behind
+		if out, err := runGit(cwd, "rev-list", "--left-right", "--count", info.BranchBase+"...HEAD"); err == nil {
+			parts := strings.Fields(strings.TrimSpace(out))
+			if len(parts) == 2 {
+				fmt.Sscanf(parts[0], "%d", &info.BehindCount)
+				fmt.Sscanf(parts[1], "%d", &info.AheadCount)
+			}
+		}
+
+		// Commits on branch
+		if out, err := runGit(cwd, "log", "--oneline", info.BranchBase+"..HEAD"); err == nil {
+			for _, line := range strings.Split(out, "\n") {
+				line = strings.TrimSpace(line)
+				if line != "" {
+					info.BranchCommits = append(info.BranchCommits, line)
+				}
 			}
 		}
 	}
@@ -63,25 +137,77 @@ func GetInfo(cwd string) *Info {
 	return info
 }
 
-// GetFileDiff returns the diff for a specific file.
-// It tries working tree diff first, then staged diff.
-func GetFileDiff(cwd, path string) string {
-	// Try unstaged diff first
-	if out, err := runGit(cwd, "diff", "--", path); err == nil && strings.TrimSpace(out) != "" {
-		return out
+// fillNumstat runs git diff --numstat and fills in additions/deletions for matching entries
+func fillNumstat(cwd string, entries []FileEntry, args ...string) {
+	if len(entries) == 0 {
+		return
 	}
-	// Try staged diff
-	if out, err := runGit(cwd, "diff", "--cached", "--", path); err == nil && strings.TrimSpace(out) != "" {
-		return out
+	out, err := runGit(cwd, args...)
+	if err != nil {
+		return
 	}
-	// For untracked files, show the file content
-	if out, err := runGit(cwd, "show", ":"+path); err != nil {
-		// Truly untracked — read from disk
-		if content, err2 := readFileHead(cwd, path, 200); err2 == nil {
+	// Build path -> index map
+	pathIdx := make(map[string][]int)
+	for i, e := range entries {
+		pathIdx[e.Path] = append(pathIdx[e.Path], i)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		parts := strings.Fields(line)
+		if len(parts) < 3 {
+			continue
+		}
+		add, _ := strconv.Atoi(parts[0])
+		del, _ := strconv.Atoi(parts[1])
+		path := parts[2]
+		for _, idx := range pathIdx[path] {
+			entries[idx].Additions = add
+			entries[idx].Deletions = del
+		}
+	}
+}
+
+func detectBaseBranch(cwd string) string {
+	if _, err := runGit(cwd, "rev-parse", "--verify", "origin/master"); err == nil {
+		return "origin/master"
+	}
+	if _, err := runGit(cwd, "rev-parse", "--verify", "origin/main"); err == nil {
+		return "origin/main"
+	}
+	return ""
+}
+
+func (info *Info) FilesForMode(mode GitMode) []FileEntry {
+	switch mode {
+	case ModeUnstaged:
+		return info.Unstaged
+	case ModeStaged:
+		return info.Staged
+	case ModeBranch:
+		return info.BranchFiles
+	}
+	return nil
+}
+
+func GetFileDiff(cwd, path string, mode GitMode) string {
+	switch mode {
+	case ModeUnstaged:
+		if out, err := runGit(cwd, "diff", "--", path); err == nil && strings.TrimSpace(out) != "" {
+			return out
+		}
+		if content, err := readFileHead(cwd, path, 200); err == nil {
 			return "new file: " + path + "\n\n" + content
 		}
-	} else {
-		_ = out
+	case ModeStaged:
+		if out, err := runGit(cwd, "diff", "--cached", "--", path); err == nil && strings.TrimSpace(out) != "" {
+			return out
+		}
+	case ModeBranch:
+		base := detectBaseBranch(cwd)
+		if base != "" {
+			if out, err := runGit(cwd, "diff", base+"...HEAD", "--", path); err == nil && strings.TrimSpace(out) != "" {
+				return out
+			}
+		}
 	}
 	return ""
 }

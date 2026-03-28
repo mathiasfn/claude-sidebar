@@ -8,10 +8,17 @@ import (
 )
 
 type Usage struct {
-	InputTokens              int `json:"input_tokens"`
-	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
-	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
-	OutputTokens             int `json:"output_tokens"`
+	InputTokens              int    `json:"input_tokens"`
+	CacheCreationInputTokens int    `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int    `json:"cache_read_input_tokens"`
+	OutputTokens             int    `json:"output_tokens"`
+	Speed                    string `json:"speed,omitempty"`
+	ServiceTier              string `json:"service_tier,omitempty"`
+}
+
+// ContextTokens returns the total context used in this usage snapshot
+func (u Usage) ContextTokens() int {
+	return u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens
 }
 
 type ContentBlock struct {
@@ -54,6 +61,8 @@ type SessionData struct {
 	Branch     string
 	Turns      int
 	Tokens     Usage
+	LastUsage  Usage  // most recent completed message — for context %
+	Speed      string // "standard", "fast", etc.
 	Activities []ActivityItem
 	LastUpdate time.Time
 }
@@ -107,6 +116,16 @@ func ParseJSONL(path string) (*SessionData, error) {
 
 			if entry.GitBranch != "" {
 				data.Branch = entry.GitBranch
+			}
+
+			// Track last completed message usage for context %
+			if msg.StopReason != nil && (msg.Usage.InputTokens > 0 || msg.Usage.CacheReadInputTokens > 0) {
+				data.LastUsage = msg.Usage
+			}
+
+			// Track speed/effort
+			if msg.Usage.Speed != "" {
+				data.Speed = msg.Usage.Speed
 			}
 
 			// Only count completed messages as activity
@@ -219,6 +238,13 @@ func ParseJSONLFrom(path string, offset int64) (*SessionData, int64, error) {
 			}
 			if entry.GitBranch != "" {
 				data.Branch = entry.GitBranch
+			}
+			// Track last completed message for context %
+			if msg.StopReason != nil && (msg.Usage.InputTokens > 0 || msg.Usage.CacheReadInputTokens > 0) {
+				data.LastUsage = msg.Usage
+			}
+			if msg.Usage.Speed != "" {
+				data.Speed = msg.Usage.Speed
 			}
 		}
 

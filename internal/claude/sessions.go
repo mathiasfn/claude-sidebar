@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -89,17 +90,52 @@ func claudeSessionsDir() (string, error) {
 }
 
 func DiscoverSessions(filterCwd string) ([]Session, error) {
+	_, alive, err := discoverAllSessions(filterCwd)
+	return alive, err
+}
+
+// DiscoverSessionsWithRecent returns alive sessions and the N most recent dead ones
+func DiscoverSessionsWithRecent(filterCwd string, recentDead int) (alive []Session, dead []Session, err error) {
+	all, aliveList, err := discoverAllSessions(filterCwd)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Collect dead sessions (sorted newest first by startedAt)
+	aliveSet := make(map[string]bool)
+	for _, s := range aliveList {
+		aliveSet[s.SessionID] = true
+	}
+
+	for _, s := range all {
+		if !aliveSet[s.SessionID] {
+			dead = append(dead, s)
+		}
+	}
+
+	// Sort dead by startedAt descending
+	sort.Slice(dead, func(i, j int) bool {
+		return dead[i].StartedAt > dead[j].StartedAt
+	})
+
+	if len(dead) > recentDead {
+		dead = dead[:recentDead]
+	}
+
+	return aliveList, dead, nil
+}
+
+func discoverAllSessions(filterCwd string) (all []Session, alive []Session, err error) {
 	dir, err := claudeSessionsDir()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, fmt.Errorf("reading sessions dir: %w", err)
+		return nil, nil, fmt.Errorf("reading sessions dir: %w", err)
 	}
 
-	var sessions []Session
 	for _, entry := range entries {
 		if !strings.HasSuffix(entry.Name(), ".json") {
 			continue
@@ -115,20 +151,17 @@ func DiscoverSessions(filterCwd string) ([]Session, error) {
 			continue
 		}
 
-		// Filter by cwd if specified
 		if filterCwd != "" && s.Cwd != filterCwd {
 			continue
 		}
 
-		// Only include sessions with a live process
-		if !IsProcessAlive(s.PID) {
-			continue
+		all = append(all, s)
+		if IsProcessAlive(s.PID) {
+			alive = append(alive, s)
 		}
-
-		sessions = append(sessions, s)
 	}
 
-	return sessions, nil
+	return all, alive, nil
 }
 
 func FormatAge(d time.Duration) string {

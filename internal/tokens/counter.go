@@ -2,6 +2,7 @@ package tokens
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/mathias/claude-sidebar/internal/claude"
 )
@@ -46,6 +47,31 @@ func EstimateCost(usage claude.Usage, model string) float64 {
 	cost += float64(usage.CacheReadInputTokens) / 1_000_000 * pricing.CacheReadPer1M
 	cost += float64(usage.CacheCreationInputTokens) / 1_000_000 * pricing.CacheWritePer1M
 	return cost
+}
+
+// ContextLimit returns the context window size for the given model.
+// Claude Code always uses the 1M context variant for opus/sonnet.
+// Haiku has 200K.
+func ContextLimit(model string) int {
+	if strings.Contains(model, "haiku") {
+		return 200_000
+	}
+	// opus and sonnet via Claude Code = 1M context
+	return 1_000_000
+}
+
+// ContextPercent returns how full the context window is
+func ContextPercent(lastUsage claude.Usage, model string) int {
+	total := lastUsage.ContextTokens()
+	if total == 0 {
+		return 0
+	}
+	limit := ContextLimit(model)
+	pct := total * 100 / limit
+	if pct > 100 {
+		pct = 100
+	}
+	return pct
 }
 
 func FormatTokens(n int) string {
