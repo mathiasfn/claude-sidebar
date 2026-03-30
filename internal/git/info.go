@@ -1,8 +1,11 @@
 package git
 
 import (
+	"bufio"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -213,13 +216,19 @@ func GetFileDiff(cwd, path string, mode GitMode) string {
 }
 
 func readFileHead(cwd, path string, maxLines int) (string, error) {
-	fullPath := cwd + "/" + path
-	cmd := exec.Command("head", "-n", fmt.Sprintf("%d", maxLines), fullPath)
-	out, err := cmd.Output()
+	fullPath := filepath.Join(cwd, path)
+	f, err := os.Open(fullPath)
 	if err != nil {
 		return "", err
 	}
-	return string(out), nil
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	var lines []string
+	for i := 0; i < maxLines && scanner.Scan(); i++ {
+		lines = append(lines, scanner.Text())
+	}
+	return strings.Join(lines, "\n"), nil
 }
 
 func runGit(cwd string, args ...string) (string, error) {
