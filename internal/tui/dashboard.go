@@ -25,21 +25,25 @@ func (m Model) renderDashboard() string {
 	// Render fixed sections first to measure them
 	header := m.renderHeader(w)
 	sessions := m.renderSessionsPanel(w)
+	dockerPanel := m.renderDockerPanel(w)
+	usageBar := m.renderUsageBar(w)
 	footer := m.renderFooter(w)
 
 	headerH := strings.Count(header, "\n") + 1
 	sessionsH := strings.Count(sessions, "\n") + 1
+	dockerH := strings.Count(dockerPanel, "\n") + 1
+	usageH := strings.Count(usageBar, "\n") + 1
 	footerH := strings.Count(footer, "\n") + 1
 
 	// Git panel gets all remaining height
-	gitH := h - headerH - sessionsH - footerH
+	gitH := h - headerH - sessionsH - dockerH - usageH - footerH
 	if gitH < 5 {
 		gitH = 5
 	}
 
 	gitPanel := m.renderGitPanel(w, gitH)
 
-	full := lipgloss.JoinVertical(lipgloss.Left, header, sessions, gitPanel, footer)
+	full := lipgloss.JoinVertical(lipgloss.Left, header, sessions, dockerPanel, gitPanel, usageBar, footer)
 
 	// Hard-trim to terminal height so header never scrolls away
 	lines := strings.Split(full, "\n")
@@ -540,6 +544,65 @@ func colorizeDiffLine(line string, maxWidth int) string {
 	default:
 		return dimStyle.Render("  " + display)
 	}
+}
+
+func (m Model) renderDockerPanel(width int) string {
+	if len(m.containers) == 0 {
+		return ""
+	}
+
+	innerWidth := width - 4
+	var rows []string
+
+	for _, c := range m.containers {
+		name := truncate(c.Name, 35)
+
+		left := "  " + sessionActiveStyle.Render(name)
+		right := ""
+		if c.Ports != "" {
+			right = lipgloss.NewStyle().Foreground(blue).Render(c.Ports)
+		}
+
+		if right != "" {
+			gap := innerWidth - lipgloss.Width(left) - lipgloss.Width(right)
+			if gap < 2 {
+				gap = 2
+			}
+			rows = append(rows, left+strings.Repeat(" ", gap)+right)
+		} else {
+			rows = append(rows, left+"  "+dimStyle.Render(c.Status))
+		}
+	}
+
+	content := strings.Join(rows, "\n")
+	return panelStyle.Width(width - 2).Render(
+		panelTitleStyle.Render("Docker") + "  " + dimStyle.Render(fmt.Sprintf("%d containers", len(m.containers))) + "\n" + content,
+	)
+}
+
+func (m Model) renderUsageBar(width int) string {
+	if m.usage == nil {
+		return ""
+	}
+
+	u := m.usage
+	parts := []string{}
+
+	if u.TodayMessages > 0 || u.TodayTools > 0 {
+		today := fmt.Sprintf("today: %d msgs, %d tools", u.TodayMessages, u.TodayTools)
+		parts = append(parts, today)
+	}
+
+	if u.WeekMessages > 0 {
+		week := fmt.Sprintf("week: %d msgs, %d sessions", u.WeekMessages, u.WeekSessions)
+		parts = append(parts, week)
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+
+	return "  " + dimStyle.Render("Usage  "+strings.Join(parts, "  │  "))
 }
 
 func (m Model) renderFooter(width int) string {

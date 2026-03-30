@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/mathiasfn/claude-sidebar/internal/claude"
+	"github.com/mathiasfn/claude-sidebar/internal/docker"
 	gitpkg "github.com/mathiasfn/claude-sidebar/internal/git"
 )
 
@@ -31,10 +32,17 @@ type fileDiffMsg struct {
 	diff string
 }
 
+type usageRefreshMsg struct {
+	usage      *claude.UsageSummary
+	containers []docker.Container
+}
+
 type Model struct {
-	cwd      string
-	watcher  *claude.Watcher
-	gitInfo  *gitpkg.Info
+	cwd        string
+	watcher    *claude.Watcher
+	gitInfo    *gitpkg.Info
+	usage      *claude.UsageSummary
+	containers []docker.Container
 	width    int
 	height   int
 	quitting bool
@@ -69,6 +77,7 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		startWatcher(cwd),
 		refreshGit(cwd),
+		refreshUsageAndDocker(),
 		tick(),
 	)
 }
@@ -173,6 +182,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusTime = time.Now()
 		return m, nil
 
+	case usageRefreshMsg:
+		m.usage = msg.usage
+		m.containers = msg.containers
+		return m, nil
+
 	case fileDiffMsg:
 		m.diffPath = msg.path
 		m.diffContent = msg.diff
@@ -181,7 +195,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tickMsg:
-		return m, tea.Batch(tick(), refreshGit(m.cwd))
+		return m, tea.Batch(tick(), refreshGit(m.cwd), refreshUsageAndDocker())
 	}
 
 	return m, nil
@@ -520,6 +534,15 @@ func startWatcher(cwd string) tea.Cmd {
 		}
 		w.Start()
 		return watcherReadyMsg{watcher: w}
+	}
+}
+
+func refreshUsageAndDocker() tea.Cmd {
+	return func() tea.Msg {
+		return usageRefreshMsg{
+			usage:      claude.GetUsage(),
+			containers: docker.ListContainers(),
+		}
 	}
 }
 
