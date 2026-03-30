@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -36,7 +35,9 @@ func (s Session) ShortID() string {
 }
 
 func (s Session) ProjectDir() string {
-	return strings.ReplaceAll(s.Cwd, "/", "-")
+	normalized := filepath.ToSlash(s.Cwd)
+	normalized = strings.ReplaceAll(normalized, ":", "-")
+	return strings.ReplaceAll(normalized, "/", "-")
 }
 
 func (s Session) JSONLPath() string {
@@ -70,15 +71,6 @@ func (s Session) JSONLPath() string {
 	}
 
 	return direct
-}
-
-func IsProcessAlive(pid int) bool {
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	err = process.Signal(syscall.Signal(0))
-	return err == nil
 }
 
 func claudeSessionsDir() (string, error) {

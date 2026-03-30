@@ -385,6 +385,8 @@ func copyToClipboard(text string) {
 		} else {
 			cmd = exec.Command("xsel", "--clipboard", "--input")
 		}
+	case "windows":
+		cmd = exec.Command("clip")
 	default:
 		return
 	}
